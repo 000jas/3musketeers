@@ -65,7 +65,7 @@ const HomeScreen = () => {
                 console.warn('Failed to load farm location:', e);
             }
 
-            // Live weather from Tomorrow.io using farm coordinates
+            // Live weather from Google Weather API using farm coordinates
             const weatherData = await WeatherEngine.getCurrentWeather(detected, farmCoords);
             setWeather(weatherData);
 

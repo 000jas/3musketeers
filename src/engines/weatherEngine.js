@@ -1,37 +1,39 @@
 /**
  * weatherEngine.js
  *
- * Live weather data from Tomorrow.io API.
+ * Live weather data from Google Cloud Weather API.
  * Falls back to AsyncStorage cache, then offline seasonal estimation.
  */
 
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const getTomorrowApiKey = () =>
-    Constants.expoConfig?.extra?.TOMORROW_API_KEY
-    || process.env.TOMORROW_API_KEY
+const getGoogleApiKey = () =>
+    Constants.expoConfig?.extra?.GOOGLE_GEOCODING_API_KEY
+    || process.env.GOOGLE_GEOCODING_API_KEY
     || '';
 
-// Tomorrow.io weather code → condition + icon
-const WEATHER_CODE_MAP = {
-    0: { condition: 'Unknown', icon: 'partly-sunny' },
-    1000: { condition: 'Clear', icon: 'sunny' },
-    1100: { condition: 'Mostly Clear', icon: 'sunny' },
-    1101: { condition: 'Partly Cloudy', icon: 'partly-sunny' },
-    1102: { condition: 'Mostly Cloudy', icon: 'cloudy' },
-    1001: { condition: 'Cloudy', icon: 'cloudy' },
-    2000: { condition: 'Fog', icon: 'cloudy' },
-    2100: { condition: 'Light Fog', icon: 'cloudy' },
-    4000: { condition: 'Drizzle', icon: 'rainy' },
-    4001: { condition: 'Rain', icon: 'rainy' },
-    4200: { condition: 'Light Rain', icon: 'rainy' },
-    4201: { condition: 'Heavy Rain', icon: 'rainy' },
-    8000: { condition: 'Thunderstorm', icon: 'thunderstorm' },
-    5000: { condition: 'Snow', icon: 'snow' },
+// Google Weather API condition type → icon mapping
+const CONDITION_ICON_MAP = {
+    CLEAR: 'sunny',
+    MOSTLY_CLEAR: 'sunny',
+    PARTLY_CLOUDY: 'partly-sunny',
+    MOSTLY_CLOUDY: 'cloudy',
+    CLOUDY: 'cloudy',
+    FOG: 'cloudy',
+    LIGHT_FOG: 'cloudy',
+    DRIZZLE: 'rainy',
+    RAIN: 'rainy',
+    LIGHT_RAIN: 'rainy',
+    HEAVY_RAIN: 'rainy',
+    SNOW: 'snow',
+    LIGHT_SNOW: 'snow',
+    HEAVY_SNOW: 'snow',
+    THUNDERSTORM: 'thunderstorm',
+    HAIL: 'thunderstorm',
 };
 
-const getWeatherInfo = (code) => WEATHER_CODE_MAP[code] || WEATHER_CODE_MAP[0];
+const getIconForCondition = (type) => CONDITION_ICON_MAP[type] || 'partly-sunny';
 
 // Offline fallback — season-based estimation
 const offlineFallback = (region) => {
@@ -45,46 +47,49 @@ const offlineFallback = (region) => {
 
 export const WeatherEngine = {
     /**
-     * Get current weather from Tomorrow.io API.
+     * Get current weather from Google Cloud Weather API.
      * Falls back to cache → offline estimate.
      * @param {Object} region - { state, district }
      * @param {Object} farmCoords - { latitude, longitude } from farm details
      */
     getCurrentWeather: async (region, farmCoords = null) => {
-        const apiKey = getTomorrowApiKey();
+        const apiKey = getGoogleApiKey();
         const lat = farmCoords?.latitude ?? 19.9975;
         const lng = farmCoords?.longitude ?? 73.7898;
 
         if (apiKey) {
             try {
-                const url = `https://api.tomorrow.io/v4/weather/forecast?location=${lat},${lng}&apikey=${apiKey}`;
+                const url = `https://weather.googleapis.com/v1/currentConditions:lookup?key=${apiKey}&location.latitude=${lat}&location.longitude=${lng}`;
                 const response = await fetch(url);
                 if (response.ok) {
                     const data = await response.json();
-                    const current = data.timelines?.minutely?.[0]?.values
-                        || data.timelines?.hourly?.[0]?.values;
 
-                    if (current) {
-                        const info = getWeatherInfo(current.weatherCode || 0);
-                        const result = {
-                            temperature: Math.round(current.temperature ?? 0),
-                            feelsLike: Math.round(current.temperatureApparent ?? current.temperature ?? 0),
-                            condition: info.condition,
-                            humidity: Math.round(current.humidity ?? 0),
-                            rainfall: Math.round((current.precipitationIntensity ?? 0) * 10) / 10,
-                            icon: info.icon,
-                            windSpeed: Math.round((current.windSpeed ?? 0) * 10) / 10,
-                            uvIndex: current.uvIndex ?? 0,
-                            visibility: Math.round((current.visibility ?? 0) * 10) / 10,
-                            lastUpdated: new Date().toISOString(),
-                            source: 'tomorrow.io',
-                        };
-                        await AsyncStorage.setItem('weather-cache', JSON.stringify(result));
-                        return result;
-                    }
+                    const conditionType = data.weatherCondition?.type || 'CLEAR';
+                    const conditionText = data.weatherCondition?.description?.text || conditionType;
+                    const icon = getIconForCondition(conditionType);
+
+                    // Wind speed comes in km/h, convert to m/s for consistency
+                    const windSpeedKmh = data.wind?.speed?.value ?? 0;
+                    const windSpeedMs = Math.round((windSpeedKmh / 3.6) * 10) / 10;
+
+                    const result = {
+                        temperature: Math.round(data.temperature?.degrees ?? 0),
+                        feelsLike: Math.round(data.feelsLikeTemperature?.degrees ?? data.temperature?.degrees ?? 0),
+                        condition: conditionText,
+                        humidity: Math.round(data.relativeHumidity ?? 0),
+                        rainfall: Math.round((data.precipitation?.qpf?.quantity ?? 0) * 10) / 10,
+                        icon,
+                        windSpeed: windSpeedMs,
+                        uvIndex: data.uvIndex ?? 0,
+                        visibility: Math.round((data.visibility?.distance ?? 0) * 10) / 10,
+                        lastUpdated: new Date().toISOString(),
+                        source: 'google-weather',
+                    };
+                    await AsyncStorage.setItem('weather-cache', JSON.stringify(result));
+                    return result;
                 }
             } catch (err) {
-                console.warn('Tomorrow.io API failed, using fallback:', err.message);
+                console.warn('Google Weather API failed, using fallback:', err.message);
             }
         }
 
