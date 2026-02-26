@@ -33,6 +33,7 @@ const HomeScreen = () => {
     const [currentTip, setCurrentTip] = useState(null);
     const [userCrops, setUserCrops] = useState([]);
     const [weather, setWeather] = useState(null);
+    const [farmLocation, setFarmLocation] = useState(null);
 
     // New state for visual guides
     const [taskGuideVisible, setTaskGuideVisible] = useState(false);
@@ -51,8 +52,21 @@ const HomeScreen = () => {
             const detected = await RegionDetectionEngine.detectRegion();
             setRegion(detected);
 
-            // Load weather based on region
-            const weatherData = WeatherEngine.getCurrentWeather(detected);
+            // Load farm location from saved farm details
+            let farmCoords = null;
+            try {
+                const farmStr = await AsyncStorage.getItem('farm-details');
+                if (farmStr) {
+                    const farm = JSON.parse(farmStr);
+                    setFarmLocation(farm);
+                    farmCoords = { latitude: farm.latitude, longitude: farm.longitude };
+                }
+            } catch (e) {
+                console.warn('Failed to load farm location:', e);
+            }
+
+            // Live weather from Tomorrow.io using farm coordinates
+            const weatherData = await WeatherEngine.getCurrentWeather(detected, farmCoords);
             setWeather(weatherData);
 
             // Load user crops first
@@ -205,7 +219,11 @@ const HomeScreen = () => {
                 <View>
                     <Text style={styles.greeting}>Welcome back, {userName}!</Text>
                     <Text style={styles.location}>
-                        📍 {region ? `${region.district}, ${region.state}` : 'Locating...'}
+                        📍 {farmLocation?.formatted_address
+                            ? farmLocation.formatted_address
+                            : region
+                                ? `${region.district}, ${region.state}`
+                                : 'Locating...'}
                     </Text>
                 </View>
             </View>

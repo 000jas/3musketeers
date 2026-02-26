@@ -18,8 +18,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { LANGUAGES } from '../utils/constants';
 import { RegionDetectionEngine } from '../engines/regionDetectionEngine';
+import { useAuth } from '../utils/AuthContext';
 
 const SettingsScreen = () => {
+    const { onLogout } = useAuth();
     const { t, i18n } = useTranslation();
     const [user, setUser] = useState({ name: 'Guest Farmer', phone: '', village: '' });
     const [modalVisible, setModalVisible] = useState(false);
@@ -325,20 +327,7 @@ const SettingsScreen = () => {
                         { text: 'Cancel', style: 'cancel' },
                         {
                             text: 'Log Out', style: 'destructive', onPress: async () => {
-                                try {
-                                    await AsyncStorage.multiRemove(['user-profile', 'notifications_v1', 'user-crops']);
-                                    Alert.alert('Success', 'Logged out successfully. Please restart the app.', [
-                                        {
-                                            text: 'OK', onPress: () => {
-                                                if (typeof window !== 'undefined') {
-                                                    window.location.reload();
-                                                }
-                                            }
-                                        }
-                                    ]);
-                                } catch (e) {
-                                    Alert.alert('Error', 'Failed to log out. Please try again.');
-                                }
+                                if (onLogout) await onLogout();
                             }
                         }
                     ]);

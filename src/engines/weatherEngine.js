@@ -1,223 +1,113 @@
 /**
  * weatherEngine.js
- * 
- * Offline weather generation based on region and season
- * Provides realistic weather data without internet connection
+ *
+ * Live weather data from Tomorrow.io API.
+ * Falls back to AsyncStorage cache, then offline seasonal estimation.
  */
 
-// Weather patterns by region and season
-const WEATHER_PATTERNS = {
-    // North India
-    north: {
-        winter: { tempRange: [5, 20], rainfall: 'low', humidity: [40, 60], conditions: ['Clear', 'Foggy', 'Partly Cloudy'] },
-        summer: { tempRange: [25, 45], rainfall: 'very_low', humidity: [20, 40], conditions: ['Sunny', 'Hot', 'Hazy'] },
-        monsoon: { tempRange: [25, 35], rainfall: 'high', humidity: [70, 90], conditions: ['Rainy', 'Cloudy', 'Thunderstorm'] },
-        autumn: { tempRange: [15, 30], rainfall: 'medium', humidity: [50, 70], conditions: ['Pleasant', 'Partly Cloudy', 'Clear'] }
-    },
-    // South India
-    south: {
-        winter: { tempRange: [18, 28], rainfall: 'low', humidity: [50, 70], conditions: ['Pleasant', 'Clear', 'Partly Cloudy'] },
-        summer: { tempRange: [28, 38], rainfall: 'low', humidity: [40, 60], conditions: ['Hot', 'Sunny', 'Humid'] },
-        monsoon: { tempRange: [24, 32], rainfall: 'very_high', humidity: [75, 95], conditions: ['Heavy Rain', 'Cloudy', 'Thunderstorm'] },
-        autumn: { tempRange: [22, 32], rainfall: 'medium', humidity: [60, 80], conditions: ['Humid', 'Partly Cloudy', 'Light Rain'] }
-    },
-    // West India
-    west: {
-        winter: { tempRange: [12, 25], rainfall: 'low', humidity: [45, 65], conditions: ['Clear', 'Pleasant', 'Sunny'] },
-        summer: { tempRange: [28, 42], rainfall: 'very_low', humidity: [25, 45], conditions: ['Very Hot', 'Dry', 'Sunny'] },
-        monsoon: { tempRange: [26, 34], rainfall: 'very_high', humidity: [75, 90], conditions: ['Heavy Rain', 'Cloudy', 'Humid'] },
-        autumn: { tempRange: [20, 32], rainfall: 'medium', humidity: [55, 75], conditions: ['Pleasant', 'Partly Cloudy', 'Warm'] }
-    },
-    // East India
-    east: {
-        winter: { tempRange: [10, 22], rainfall: 'low', humidity: [50, 70], conditions: ['Cool', 'Clear', 'Foggy'] },
-        summer: { tempRange: [30, 40], rainfall: 'medium', humidity: [60, 80], conditions: ['Hot', 'Humid', 'Partly Cloudy'] },
-        monsoon: { tempRange: [26, 34], rainfall: 'very_high', humidity: [80, 95], conditions: ['Heavy Rain', 'Thunderstorm', 'Cloudy'] },
-        autumn: { tempRange: [20, 30], rainfall: 'medium', humidity: [65, 85], conditions: ['Humid', 'Cloudy', 'Light Rain'] }
-    },
-    // Central India
-    central: {
-        winter: { tempRange: [8, 24], rainfall: 'low', humidity: [40, 60], conditions: ['Clear', 'Cool', 'Sunny'] },
-        summer: { tempRange: [30, 45], rainfall: 'very_low', humidity: [20, 40], conditions: ['Very Hot', 'Dry', 'Sunny'] },
-        monsoon: { tempRange: [26, 36], rainfall: 'high', humidity: [70, 85], conditions: ['Rainy', 'Cloudy', 'Humid'] },
-        autumn: { tempRange: [18, 32], rainfall: 'medium', humidity: [50, 70], conditions: ['Pleasant', 'Clear', 'Warm'] }
-    }
+import Constants from 'expo-constants';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const getTomorrowApiKey = () =>
+    Constants.expoConfig?.extra?.TOMORROW_API_KEY
+    || process.env.TOMORROW_API_KEY
+    || '';
+
+// Tomorrow.io weather code → condition + icon
+const WEATHER_CODE_MAP = {
+    0: { condition: 'Unknown', icon: 'partly-sunny' },
+    1000: { condition: 'Clear', icon: 'sunny' },
+    1100: { condition: 'Mostly Clear', icon: 'sunny' },
+    1101: { condition: 'Partly Cloudy', icon: 'partly-sunny' },
+    1102: { condition: 'Mostly Cloudy', icon: 'cloudy' },
+    1001: { condition: 'Cloudy', icon: 'cloudy' },
+    2000: { condition: 'Fog', icon: 'cloudy' },
+    2100: { condition: 'Light Fog', icon: 'cloudy' },
+    4000: { condition: 'Drizzle', icon: 'rainy' },
+    4001: { condition: 'Rain', icon: 'rainy' },
+    4200: { condition: 'Light Rain', icon: 'rainy' },
+    4201: { condition: 'Heavy Rain', icon: 'rainy' },
+    8000: { condition: 'Thunderstorm', icon: 'thunderstorm' },
+    5000: { condition: 'Snow', icon: 'snow' },
 };
 
-// Rainfall amounts (mm)
-const RAINFALL_AMOUNTS = {
-    very_low: [0, 5],
-    low: [5, 20],
-    medium: [20, 50],
-    high: [50, 100],
-    very_high: [100, 200]
+const getWeatherInfo = (code) => WEATHER_CODE_MAP[code] || WEATHER_CODE_MAP[0];
+
+// Offline fallback — season-based estimation
+const offlineFallback = (region) => {
+    const month = new Date().getMonth() + 1;
+    let temp = 28, humidity = 60, condition = 'Clear', icon = 'sunny', rainfall = 0;
+    if (month >= 12 || month <= 2) { temp = 15; condition = 'Cool'; icon = 'partly-sunny'; humidity = 50; }
+    else if (month >= 3 && month <= 5) { temp = 36; humidity = 35; condition = 'Hot'; icon = 'sunny'; }
+    else if (month >= 6 && month <= 9) { temp = 30; humidity = 80; condition = 'Rainy'; icon = 'rainy'; rainfall = 40; }
+    return { temperature: temp, feelsLike: temp + 2, condition, humidity, rainfall, icon, windSpeed: 0, uvIndex: 0, visibility: 10, lastUpdated: new Date().toISOString(), source: 'offline' };
 };
 
-/**
- * Determine current season based on month
- */
-const getCurrentSeason = () => {
-    const month = new Date().getMonth() + 1; // 1-12
-
-    if (month >= 12 || month <= 2) return 'winter';
-    if (month >= 3 && month <= 5) return 'summer';
-    if (month >= 6 && month <= 9) return 'monsoon';
-    return 'autumn'; // Oct-Nov
-};
-
-/**
- * Determine region zone from state
- */
-const getRegionZone = (state) => {
-    const stateUpper = state?.toUpperCase() || '';
-
-    // North: Punjab, Haryana, Delhi, UP, Uttarakhand, HP, J&K
-    if (stateUpper.includes('PUNJAB') || stateUpper.includes('HARYANA') ||
-        stateUpper.includes('DELHI') || stateUpper.includes('UTTAR') ||
-        stateUpper.includes('UTTARAKHAND') || stateUpper.includes('HIMACHAL') ||
-        stateUpper.includes('JAMMU')) {
-        return 'north';
-    }
-
-    // South: TN, Kerala, Karnataka, AP, Telangana
-    if (stateUpper.includes('TAMIL') || stateUpper.includes('KERALA') ||
-        stateUpper.includes('KARNATAKA') || stateUpper.includes('ANDHRA') ||
-        stateUpper.includes('TELANGANA')) {
-        return 'south';
-    }
-
-    // West: Maharashtra, Gujarat, Goa, Rajasthan
-    if (stateUpper.includes('MAHARASHTRA') || stateUpper.includes('GUJARAT') ||
-        stateUpper.includes('GOA') || stateUpper.includes('RAJASTHAN')) {
-        return 'west';
-    }
-
-    // East: WB, Bihar, Odisha, Jharkhand, Assam, NE states
-    if (stateUpper.includes('BENGAL') || stateUpper.includes('BIHAR') ||
-        stateUpper.includes('ODISHA') || stateUpper.includes('JHARKHAND') ||
-        stateUpper.includes('ASSAM') || stateUpper.includes('TRIPURA') ||
-        stateUpper.includes('MEGHALAYA') || stateUpper.includes('MANIPUR')) {
-        return 'east';
-    }
-
-    // Default to central: MP, Chhattisgarh
-    return 'central';
-};
-
-/**
- * Generate random value within range
- */
-const randomInRange = (min, max) => {
-    return Math.floor(Math.random() * (max - min + 1)) + min;
-};
-
-/**
- * Generate weather data for a location
- */
 export const WeatherEngine = {
     /**
-     * Get current weather for a region
+     * Get current weather from Tomorrow.io API.
+     * Falls back to cache → offline estimate.
      * @param {Object} region - { state, district }
-     * @returns {Object} Weather data
+     * @param {Object} farmCoords - { latitude, longitude } from farm details
      */
-    getCurrentWeather: (region) => {
-        const zone = getRegionZone(region?.state);
-        const season = getCurrentSeason();
-        const pattern = WEATHER_PATTERNS[zone][season];
+    getCurrentWeather: async (region, farmCoords = null) => {
+        const apiKey = getTomorrowApiKey();
+        const lat = farmCoords?.latitude ?? 19.9975;
+        const lng = farmCoords?.longitude ?? 73.7898;
 
-        // Generate temperature
-        const temp = randomInRange(pattern.tempRange[0], pattern.tempRange[1]);
-        const feelsLike = temp + randomInRange(-2, 3);
+        if (apiKey) {
+            try {
+                const url = `https://api.tomorrow.io/v4/weather/forecast?location=${lat},${lng}&apikey=${apiKey}`;
+                const response = await fetch(url);
+                if (response.ok) {
+                    const data = await response.json();
+                    const current = data.timelines?.minutely?.[0]?.values
+                        || data.timelines?.hourly?.[0]?.values;
 
-        // Generate rainfall
-        const rainfallRange = RAINFALL_AMOUNTS[pattern.rainfall];
-        const rainfall = randomInRange(rainfallRange[0], rainfallRange[1]);
-
-        // Generate humidity
-        const humidity = randomInRange(pattern.humidity[0], pattern.humidity[1]);
-
-        // Pick random condition
-        const condition = pattern.conditions[Math.floor(Math.random() * pattern.conditions.length)];
-
-        // Determine icon
-        let icon = 'sunny';
-        if (condition.includes('Rain') || condition.includes('Rainy')) icon = 'rainy';
-        else if (condition.includes('Cloud')) icon = 'cloudy';
-        else if (condition.includes('Thunder')) icon = 'thunderstorm';
-        else if (condition.includes('Fog')) icon = 'cloudy';
-
-        return {
-            temperature: temp,
-            feelsLike: feelsLike,
-            condition: condition,
-            humidity: humidity,
-            rainfall: rainfall,
-            icon: icon,
-            season: season,
-            zone: zone,
-            lastUpdated: new Date().toISOString()
-        };
-    },
-
-    /**
-     * Get weather forecast for next 7 days
-     * @param {Object} region - { state, district }
-     * @returns {Array} 7-day forecast
-     */
-    getForecast: (region) => {
-        const forecast = [];
-        const zone = getRegionZone(region?.state);
-        const season = getCurrentSeason();
-        const pattern = WEATHER_PATTERNS[zone][season];
-
-        for (let i = 0; i < 7; i++) {
-            const date = new Date();
-            date.setDate(date.getDate() + i);
-
-            const temp = randomInRange(pattern.tempRange[0], pattern.tempRange[1]);
-            const condition = pattern.conditions[Math.floor(Math.random() * pattern.conditions.length)];
-            const rainfallRange = RAINFALL_AMOUNTS[pattern.rainfall];
-            const rainfall = randomInRange(rainfallRange[0], rainfallRange[1]);
-
-            let icon = 'sunny';
-            if (condition.includes('Rain')) icon = 'rainy';
-            else if (condition.includes('Cloud')) icon = 'cloudy';
-            else if (condition.includes('Thunder')) icon = 'thunderstorm';
-
-            forecast.push({
-                date: date.toISOString().split('T')[0],
-                day: date.toLocaleDateString('en-US', { weekday: 'short' }),
-                temperature: temp,
-                condition: condition,
-                rainfall: rainfall,
-                icon: icon
-            });
+                    if (current) {
+                        const info = getWeatherInfo(current.weatherCode || 0);
+                        const result = {
+                            temperature: Math.round(current.temperature ?? 0),
+                            feelsLike: Math.round(current.temperatureApparent ?? current.temperature ?? 0),
+                            condition: info.condition,
+                            humidity: Math.round(current.humidity ?? 0),
+                            rainfall: Math.round((current.precipitationIntensity ?? 0) * 10) / 10,
+                            icon: info.icon,
+                            windSpeed: Math.round((current.windSpeed ?? 0) * 10) / 10,
+                            uvIndex: current.uvIndex ?? 0,
+                            visibility: Math.round((current.visibility ?? 0) * 10) / 10,
+                            lastUpdated: new Date().toISOString(),
+                            source: 'tomorrow.io',
+                        };
+                        await AsyncStorage.setItem('weather-cache', JSON.stringify(result));
+                        return result;
+                    }
+                }
+            } catch (err) {
+                console.warn('Tomorrow.io API failed, using fallback:', err.message);
+            }
         }
 
-        return forecast;
+        // Try cache
+        try {
+            const cached = await AsyncStorage.getItem('weather-cache');
+            if (cached) return { ...JSON.parse(cached), source: 'cached' };
+        } catch { }
+
+        return offlineFallback(region);
     },
 
     /**
-     * Get farming advice based on weather
-     * @param {Object} weather - Current weather data
-     * @returns {String} Farming advice
+     * Get farming advice based on current weather.
      */
     getFarmingAdvice: (weather) => {
-        if (weather.rainfall > 50) {
-            return 'Heavy rainfall expected. Ensure proper drainage in fields. Delay fertilizer application.';
-        }
-        if (weather.temperature > 38) {
-            return 'Very hot weather. Increase irrigation frequency. Provide shade for sensitive crops.';
-        }
-        if (weather.temperature < 15) {
-            return 'Cool weather. Protect crops from frost. Good time for winter crop sowing.';
-        }
-        if (weather.humidity > 80) {
-            return 'High humidity. Monitor for fungal diseases. Ensure good air circulation.';
-        }
-        if (weather.rainfall < 5 && weather.temperature > 30) {
-            return 'Dry and hot conditions. Ensure adequate irrigation. Mulch to retain moisture.';
-        }
-        return 'Weather conditions are favorable for farming activities.';
-    }
+        if (!weather) return 'Weather data unavailable.';
+        if (weather.rainfall > 50) return 'Heavy rainfall. Ensure drainage and delay fertilizer application.';
+        if (weather.rainfall > 20) return 'Moderate rain. Good for irrigation. Watch for waterlogging.';
+        if (weather.temperature > 38) return 'Extreme heat. Irrigate early morning or evening. Protect crops from sunburn.';
+        if (weather.temperature > 32) return 'Hot weather. Ensure adequate irrigation. Monitor for heat stress.';
+        if (weather.temperature < 10) return 'Cold weather. Protect sensitive crops from frost damage.';
+        if (weather.humidity > 80) return 'High humidity. Watch for fungal diseases. Ensure good air circulation.';
+        return 'Favorable weather conditions. Good time for regular farm activities.';
+    },
 };
