@@ -10,6 +10,7 @@ import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import DAILY_TIPS from '../data/dailyTips.json';
 import { getCropTimeline, getUpcomingTasks, getHarvestInfo, getCropData, getRecommendation } from '../data/cropDatabase';
+import { fetchLatestCommunityPosts } from '../db/communitySupabase';
 
 // Import local illustrations
 const Illustrations = {
@@ -38,6 +39,7 @@ const HomeScreen = () => {
     // New state for visual guides
     const [taskGuideVisible, setTaskGuideVisible] = useState(false);
     const [selectedTask, setSelectedTask] = useState(null);
+    const [communityPosts, setCommunityPosts] = useState([]);
 
     useEffect(() => {
         loadData();
@@ -77,6 +79,14 @@ const HomeScreen = () => {
             setAlerts(generatedInsights.slice(0, 3));
 
             await refreshNotifications(crops);
+
+            // Fetch community
+            try {
+                const posts = await fetchLatestCommunityPosts(3);
+                setCommunityPosts(posts);
+            } catch (err) {
+                console.warn('Failed to load community posts widget', err);
+            }
 
         } catch (e) {
             console.error(e);
@@ -255,19 +265,48 @@ const HomeScreen = () => {
                 {renderQuickAction('newspaper-outline', 'Tips', 'AI')}
             </View>
 
-            {/* Daily Tip */}
-            <View style={styles.tipCard}>
-                <View style={styles.tipHeader}>
-                    <Ionicons name="bulb" size={20} color="#fff" />
-                    <Text style={styles.tipTitle}>Daily Tip</Text>
-                    <TouchableOpacity onPress={loadRandomTip} style={styles.refreshTip}>
-                        <Ionicons name="refresh" size={18} color="rgba(255,255,255,0.8)" />
-                    </TouchableOpacity>
-                </View>
-                <Text style={styles.tipContent}>
-                    {currentTip ? currentTip[i18n.language] || currentTip.en : 'Loading tip...'}
-                </Text>
+            {/* Expert Community Widget (Replaced Tips) */}
+            <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>🤝 Expert Community</Text>
+                <TouchableOpacity onPress={() => navigation.navigate('Community')}>
+                    <Text style={styles.viewAll}>View All</Text>
+                </TouchableOpacity>
             </View>
+
+            {communityPosts.length > 0 ? (
+                <View style={styles.communityWidgetCard}>
+                    {communityPosts.map((post, index) => (
+                        <TouchableOpacity
+                            key={post.id}
+                            style={[
+                                styles.communityWidgetRow,
+                                index === communityPosts.length - 1 && { borderBottomWidth: 0, paddingBottom: 0 }
+                            ]}
+                            onPress={() => navigation.navigate('PostDetail', { post })}
+                        >
+                            <View style={styles.communityWidgetIcon}>
+                                <Text style={styles.communityWidgetInitials}>
+                                    {post.user_name?.charAt(0)?.toUpperCase()}
+                                </Text>
+                            </View>
+                            <View style={styles.communityWidgetContent}>
+                                <Text style={styles.communityWidgetUserName}>{post.user_name}</Text>
+                                <Text numberOfLines={2} style={styles.communityWidgetQuestion}>
+                                    {post.question_text}
+                                </Text>
+                                <Text style={styles.communityWidgetReplies}>
+                                    {post.reply_count || 0} {(post.reply_count === 1) ? 'reply' : 'replies'}
+                                </Text>
+                            </View>
+                        </TouchableOpacity>
+                    ))}
+                </View>
+            ) : (
+                <View style={[styles.emptyAlert, { backgroundColor: '#f0f4f8' }]}>
+                    <Ionicons name="people-outline" size={40} color="#888" />
+                    <Text style={styles.emptyAlertText}>Join the discussion!</Text>
+                </View>
+            )}
 
             {/* My Crops Section */}
             {userCrops.length > 0 && (
@@ -375,7 +414,7 @@ const HomeScreen = () => {
                 </View>
             )}
 
-            <View style={{ height: 20 }} />
+            {/* Removed bottom community widget to position it higher up over tips */}
 
             {/* Notifications Modal */}
             <Modal
@@ -1018,11 +1057,64 @@ const styles = StyleSheet.create({
         gap: 8,
     },
     recommendationText: {
-        fontSize: 12,
-        color: '#e65100',
         flex: 1,
+        color: '#e65100',
+        fontSize: 13,
         fontWeight: '500',
     },
+    communityWidgetCard: {
+        backgroundColor: 'white',
+        marginHorizontal: 20,
+        padding: 15,
+        borderRadius: 15,
+        elevation: 2,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+    },
+    communityWidgetRow: {
+        flexDirection: 'row',
+        paddingVertical: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#f0f0f0',
+        alignItems: 'flex-start',
+    },
+    communityWidgetIcon: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        backgroundColor: '#e3f2fd',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 10,
+        marginTop: 2,
+    },
+    communityWidgetInitials: {
+        color: '#1976d2',
+        fontWeight: 'bold',
+        fontSize: 14,
+    },
+    communityWidgetContent: {
+        flex: 1,
+    },
+    communityWidgetUserName: {
+        fontSize: 13,
+        fontWeight: 'bold',
+        color: '#333',
+        marginBottom: 2,
+    },
+    communityWidgetQuestion: {
+        fontSize: 14,
+        color: '#555',
+        lineHeight: 20,
+        marginBottom: 4,
+    },
+    communityWidgetReplies: {
+        fontSize: 12,
+        color: '#888',
+        fontWeight: '500',
+    }
 });
 
 export default HomeScreen;
