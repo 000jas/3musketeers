@@ -167,19 +167,21 @@ export const filterCropsForFarm = (allCrops, farmData) => {
  *   - If current_month is in ideal_sowing_months → today
  *   - Else → first day of the next ideal sowing month
  *
+ * All dates are timezone-safe (local midnight, formatted as YYYY-MM-DD).
+ *
  * @param {Object} crop
  * @param {number} currentMonth (1-12)
- * @returns {string} ISO date string (YYYY-MM-DD)
+ * @returns {string} date string (YYYY-MM-DD)
  */
 export const computeSowingDate = (crop, currentMonth) => {
     const today = new Date();
 
     if (!Array.isArray(crop.ideal_sowing_months) || crop.ideal_sowing_months.length === 0) {
-        return today.toISOString().split('T')[0];
+        return formatLocalDate(today);
     }
 
     if (crop.ideal_sowing_months.includes(currentMonth)) {
-        return today.toISOString().split('T')[0];
+        return formatLocalDate(today);
     }
 
     // Find the next ideal month (could wrap into next year)
@@ -192,5 +194,67 @@ export const computeSowingDate = (crop, currentMonth) => {
     const yearOffset = nextNormMonth > 12 ? 1 : 0;
 
     const sowDate = new Date(today.getFullYear() + yearOffset, actualMonth - 1, 1);
-    return sowDate.toISOString().split('T')[0];
+    return formatLocalDate(sowDate);
+};
+
+// ─── Harvest & Date Helpers (timezone-safe) ──────────────────────────────────
+
+/**
+ * Format a Date as YYYY-MM-DD using local timezone (avoids UTC-shift issues).
+ * @param {Date} date
+ * @returns {string}
+ */
+export const formatLocalDate = (date) => {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+};
+
+/**
+ * Parse a YYYY-MM-DD string into a Date at local midnight.
+ * @param {string} dateStr
+ * @returns {Date}
+ */
+export const parseLocalDate = (dateStr) => {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    return new Date(y, m - 1, d);
+};
+
+/**
+ * Compute predicted_harvest_date from sowing_date + growth_duration_days.
+ *
+ * @param {string} sowingDateStr  - YYYY-MM-DD
+ * @param {number} growthDays     - crop.growth_duration_days
+ * @returns {string} YYYY-MM-DD
+ */
+export const computeHarvestDate = (sowingDateStr, growthDays) => {
+    const sow = parseLocalDate(sowingDateStr);
+    sow.setDate(sow.getDate() + growthDays);
+    return formatLocalDate(sow);
+};
+
+/**
+ * Calculate days remaining until harvest from today.
+ *
+ * @param {string} harvestDateStr - YYYY-MM-DD
+ * @returns {number} days (negative = already past)
+ */
+export const daysUntilHarvest = (harvestDateStr) => {
+    const harvest = parseLocalDate(harvestDateStr);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const diff = harvest.getTime() - today.getTime();
+    return Math.ceil(diff / (1000 * 60 * 60 * 24));
+};
+
+/**
+ * Format a YYYY-MM-DD string for user display (e.g. "15 Mar 2026").
+ * @param {string} dateStr
+ * @returns {string}
+ */
+export const formatDisplayDate = (dateStr) => {
+    if (!dateStr) return '—';
+    const d = parseLocalDate(dateStr);
+    return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 };

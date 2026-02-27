@@ -37,6 +37,7 @@ module.exports = {
                         'Allow AgriChain to use your location to detect your farm location.',
                 },
             ],
+            '@react-native-community/datetimepicker',
         ],
         extra: {
             GEMINI_API_KEY: process.env.GEMINI_API_KEY,

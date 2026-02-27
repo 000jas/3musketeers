@@ -11,12 +11,13 @@ import { supabase } from './supabase';
 // ─── CROP MASTER QUERIES ─────────────────────────────────────────────────────
 
 /**
- * Fetch all crops from master table (used for client-side filtering)
+ * Fetch all crops from master table (used for client-side filtering + manual dropdown)
  */
 export const fetchAllCrops = async () => {
     const { data, error } = await supabase
         .from('crops')
-        .select('*');
+        .select('*')
+        .order('crop_name', { ascending: true });
     if (error) {
         console.error('fetchAllCrops error:', error);
         throw new Error(error.message);
@@ -29,7 +30,8 @@ export const fetchAllCrops = async () => {
 /**
  * Insert selected crops for the user.
  * @param {Array} cropInserts - array of row objects for user_selected_crops
- *   Each row: { user_phone, crop_id, sowing_date, irrigation_type, last_irrigation_date }
+ *   Each row: { user_phone, crop_id, sowing_date, predicted_harvest_date,
+ *               irrigation_type, last_irrigation_date }
  */
 export const insertUserSelectedCrops = async (cropInserts) => {
     const { data, error } = await supabase
@@ -75,6 +77,7 @@ export const fetchUserSelectedCrops = async (userPhone) => {
         .select(`
             id,
             sowing_date,
+            predicted_harvest_date,
             irrigation_type,
             last_irrigation_date,
             created_at,
@@ -92,4 +95,20 @@ export const fetchUserSelectedCrops = async (userPhone) => {
         return [];
     }
     return data || [];
+};
+
+/**
+ * Delete all user_selected_crops for a user (used before re-inserting on re-selection).
+ * @param {string} userPhone
+ */
+export const deleteUserSelectedCrops = async (userPhone) => {
+    if (!userPhone) return;
+    const { error } = await supabase
+        .from('user_selected_crops')
+        .delete()
+        .eq('user_phone', userPhone);
+    if (error) {
+        console.error('deleteUserSelectedCrops error:', error);
+        throw new Error(error.message);
+    }
 };
