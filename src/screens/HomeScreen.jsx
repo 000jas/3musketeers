@@ -5,6 +5,7 @@ import { RegionDetectionEngine } from '../engines/regionDetectionEngine';
 import { Insight48hEngine } from '../engines/insight48hEngine';
 import { NotificationEngine } from '../engines/notificationEngine';
 import { WeatherEngine } from '../engines/weatherEngine';
+import { HarvestOrchestrator } from '../engines/harvestOrchestrator';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -87,6 +88,16 @@ const HomeScreen = () => {
                 setCommunityPosts(posts);
             } catch (err) {
                 console.warn('Failed to load community posts widget', err);
+            }
+
+            // Run harvest orchestrator (idempotent, cached 6hrs)
+            try {
+                const updatedCrops = await HarvestOrchestrator.processAllCrops();
+                if (updatedCrops && updatedCrops.length > 0) {
+                    setUserCrops(updatedCrops);
+                }
+            } catch (err) {
+                console.warn('Orchestrator failed on dashboard:', err);
             }
 
         } catch (e) {
@@ -261,8 +272,9 @@ const HomeScreen = () => {
             {/* Quick Actions Grid */}
             <View style={styles.actionsGrid}>
                 {renderQuickAction('leaf-outline', t('nav.crop'), 'Crop')}
-                {renderQuickAction('medkit-outline', 'Plant Clinic', 'Disease')}
+                {renderQuickAction('school-outline', 'Educator', 'Educator')}
                 {renderQuickAction('scan-outline', 'Crop Clinic', 'CropClinic')}
+                {renderQuickAction('trending-up-outline', 'Market', 'Market')}
                 {renderQuickAction('layers-outline', t('nav.soil'), 'Soil')}
             </View>
 

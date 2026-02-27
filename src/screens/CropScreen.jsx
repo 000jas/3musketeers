@@ -1,21 +1,62 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Image, ScrollView, Modal, Alert } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Image, ScrollView, Modal, Alert, ActivityIndicator } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTranslation } from 'react-i18next';
-import { CROPS } from '../utils/constants';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import { fetchAllCrops } from '../db/cropSupabase';
+import { HarvestOrchestrator } from '../engines/harvestOrchestrator';
 
 const STORAGE_KEY = 'user-crops';
 
 const CropScreen = () => {
     const { t } = useTranslation();
+    const navigation = useNavigation();
     const [myCrops, setMyCrops] = useState([]);
     const [showAdd, setShowAdd] = useState(false);
+    const [allCrops, setAllCrops] = useState([]);
+    const [cropsLoading, setCropsLoading] = useState(false);
+    const [cropSearch, setCropSearch] = useState('');
 
-    // Load crops on mount
+    // Load user crops on mount
     useEffect(() => {
         loadCrops();
+        loadAllCropsFromSupabase();
     }, []);
+
+    // Re-run orchestrator every time the screen is focused
+    useFocusEffect(
+        useCallback(() => {
+            runOrchestrator();
+        }, [])
+    );
+
+    const runOrchestrator = async () => {
+        try {
+            const updated = await HarvestOrchestrator.processAllCrops();
+            if (updated && updated.length > 0) {
+                setMyCrops(updated);
+            }
+        } catch (e) {
+            console.warn('Orchestrator failed:', e);
+        }
+    };
+
+    const loadAllCropsFromSupabase = async () => {
+        setCropsLoading(true);
+        try {
+            const crops = await fetchAllCrops();
+            setAllCrops(crops);
+        } catch (e) {
+            console.warn('Failed to fetch crops from Supabase:', e);
+        } finally {
+            setCropsLoading(false);
+        }
+    };
+
+    const filteredCrops = cropSearch.trim()
+        ? allCrops.filter(c => c.crop_name.toLowerCase().includes(cropSearch.toLowerCase()))
+        : allCrops;
 
     // Save crops whenever they change
     useEffect(() => {
@@ -80,15 +121,30 @@ const CropScreen = () => {
 
     const addCrop = () => {
         if (newCropName && variety) {
+            // Look up the crop's growth_duration_days from Supabase master list
+            const matchedCrop = allCrops.find(
+                c => c.crop_name.toLowerCase() === newCropName.toLowerCase()
+            );
+            const growthDays = matchedCrop?.growth_duration_days || 120;
+            const cropId = matchedCrop?.id || null;
+
+            // Compute harvest date
+            const sowDate = new Date(sowingDate);
+            sowDate.setDate(sowDate.getDate() + growthDays);
+            const harvestDate = sowDate.toISOString().split('T')[0];
+
             setMyCrops([...myCrops, {
                 id: Date.now().toString(),
+                cropId,              // Supabase crop UUID for risk lookups
                 name: newCropName,
                 sowingDate: sowingDate,
+                harvestDate,         // Auto-computed
                 variety: variety,
                 soil: soilType || 'Standard',
                 irrigation: irrigation || 'Manual',
-                duration: 120,
-                status: 'active'
+                duration: growthDays,
+                status: 'active',
+                harvestStatus: 'growing',
             }]);
             resetForm();
         }
@@ -116,6 +172,7 @@ const CropScreen = () => {
         setVariety('');
         setSoilType('');
         setIrrigation('');
+        setCropSearch('');
         setShowAdd(false);
         // Reset to default 1 day old
         const d = new Date();
@@ -137,7 +194,11 @@ const CropScreen = () => {
         const { diffDays, progress } = calculateProgress(item.sowingDate, item.duration);
 
         return (
-            <View style={styles.cropCard}>
+            <TouchableOpacity
+                style={styles.cropCard}
+                activeOpacity={0.85}
+                onPress={() => navigation.navigate('CropDetail', { crop: item })}
+            >
                 <View style={styles.cardHeader}>
                     <View style={styles.iconContainer}>
                         <Text style={{ fontSize: 24 }}>🌱</Text>
@@ -163,19 +224,72 @@ const CropScreen = () => {
                 </View>
 
                 <View style={styles.statusRow}>
-                    <View style={styles.statusItem}>
-                        <Ionicons name="sunny" size={16} color="#fbc02d" />
-                        <Text style={styles.statusText}>Healthy</Text>
-                    </View>
-                    <View style={styles.statusItem}>
-                        <Ionicons name="water" size={16} color="#03a9f4" />
-                        <Text style={styles.statusText}>{item.irrigation} System</Text>
-                    </View>
+                    {/* Harvest status badge */}
+                    {item.harvestStatus === 'ready_for_harvest' ? (
+                        <View style={[styles.statusItem, { backgroundColor: '#fff3e0' }]}>
+                            <Ionicons name="checkmark-done-circle" size={16} color="#e65100" />
+                            <Text style={[styles.statusText, { color: '#e65100', fontWeight: 'bold' }]}>Ready to Harvest</Text>
+                        </View>
+                    ) : item.harvestStatus === 'approaching_harvest' ? (
+                        <View style={[styles.statusItem, { backgroundColor: '#fff8e1' }]}>
+                            <Ionicons name="time" size={16} color="#f57c00" />
+                            <Text style={[styles.statusText, { color: '#f57c00' }]}>Approaching Harvest</Text>
+                        </View>
+                    ) : item.harvestStatus === 'post_harvest' ? (
+                        <View style={[styles.statusItem, { backgroundColor: '#fce4ec' }]}>
+                            <Ionicons name="archive" size={16} color="#c62828" />
+                            <Text style={[styles.statusText, { color: '#c62828' }]}>Post-Harvest</Text>
+                        </View>
+                    ) : (
+                        <View style={styles.statusItem}>
+                            <Ionicons name="sunny" size={16} color="#fbc02d" />
+                            <Text style={styles.statusText}>Growing</Text>
+                        </View>
+                    )}
+
+                    {/* Risk badge (if calculated) */}
+                    {item.riskLevel && (
+                        <View style={[styles.statusItem, {
+                            backgroundColor: item.riskLevel === 'High' ? '#ffebee'
+                                : item.riskLevel === 'Moderate' ? '#fff3e0' : '#e8f5e9'
+                        }]}>
+                            <Ionicons
+                                name={item.riskLevel === 'High' ? 'alert-circle' : item.riskLevel === 'Moderate' ? 'warning' : 'shield-checkmark'}
+                                size={14}
+                                color={item.riskLevel === 'High' ? '#c62828' : item.riskLevel === 'Moderate' ? '#f57c00' : '#2e7d32'}
+                            />
+                            <Text style={[styles.statusText, {
+                                color: item.riskLevel === 'High' ? '#c62828' : item.riskLevel === 'Moderate' ? '#f57c00' : '#2e7d32',
+                                fontWeight: '600',
+                            }]}>{item.riskLevel}</Text>
+                        </View>
+                    )}
+
                     <TouchableOpacity style={styles.harvestBtn} onPress={() => harvestCrop(item.id)}>
                         <Text style={styles.harvestText}>Harvest</Text>
                     </TouchableOpacity>
                 </View>
-            </View>
+
+                {/* Advisory banner (if generated by orchestrator) */}
+                {item.advisory && (
+                    <View style={[styles.advisoryBanner, {
+                        backgroundColor: item.advisory.urgency === 'critical' ? '#ffebee'
+                            : item.advisory.urgency === 'high' ? '#fff3e0'
+                                : item.advisory.urgency === 'medium' ? '#fff8e1' : '#e8f5e9',
+                        borderLeftColor: item.advisory.urgency === 'critical' ? '#c62828'
+                            : item.advisory.urgency === 'high' ? '#f57c00'
+                                : item.advisory.urgency === 'medium' ? '#fbc02d' : '#2e7d32',
+                    }]}>
+                        <Text style={styles.advisoryText}>{item.advisory.message}</Text>
+                    </View>
+                )}
+
+                {/* Tap hint */}
+                <View style={styles.tapHint}>
+                    <Ionicons name="chevron-forward" size={14} color="#aaa" />
+                    <Text style={styles.tapHintText}>Tap for details & spoilage risk</Text>
+                </View>
+            </TouchableOpacity>
         );
     };
 
@@ -203,19 +317,41 @@ const CropScreen = () => {
 
                         <ScrollView showsVerticalScrollIndicator={false}>
                             <Text style={styles.inputLabel}>Select Crop Name</Text>
-                            <View style={styles.chipContainer}>
-                                {CROPS.map(crop => (
-                                    <TouchableOpacity
-                                        key={crop}
-                                        style={[styles.chip, newCropName === crop && styles.chipSelected]}
-                                        onPress={() => setNewCropName(crop)}
-                                    >
-                                        <Text style={[styles.chipText, newCropName === crop && styles.chipTextSelected]}>
-                                            {crop}
-                                        </Text>
+                            <View style={styles.cropSearchBar}>
+                                <Ionicons name="search-outline" size={18} color="#888" />
+                                <TextInput
+                                    style={styles.cropSearchInput}
+                                    placeholder="Search crops..."
+                                    placeholderTextColor="#999"
+                                    value={cropSearch}
+                                    onChangeText={setCropSearch}
+                                />
+                                {cropSearch.length > 0 && (
+                                    <TouchableOpacity onPress={() => setCropSearch('')}>
+                                        <Ionicons name="close-circle" size={18} color="#aaa" />
                                     </TouchableOpacity>
-                                ))}
+                                )}
                             </View>
+                            {cropsLoading ? (
+                                <ActivityIndicator size="small" color="#2e7d32" style={{ marginVertical: 15 }} />
+                            ) : (
+                                <View style={styles.chipContainer}>
+                                    {filteredCrops.map(crop => (
+                                        <TouchableOpacity
+                                            key={crop.id}
+                                            style={[styles.chip, newCropName === crop.crop_name && styles.chipSelected]}
+                                            onPress={() => setNewCropName(crop.crop_name)}
+                                        >
+                                            <Text style={[styles.chipText, newCropName === crop.crop_name && styles.chipTextSelected]}>
+                                                {crop.crop_name}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    ))}
+                                    {filteredCrops.length === 0 && (
+                                        <Text style={{ color: '#999', padding: 10 }}>No crops match your search</Text>
+                                    )}
+                                </View>
+                            )}
 
                             <Text style={styles.inputLabel}>Variety (Common/Hybrid)</Text>
                             <TextInput
@@ -364,6 +500,21 @@ const styles = StyleSheet.create({
     },
     halfInput: {
         width: '48%',
+    },
+    cropSearchBar: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#f5f5f5',
+        borderRadius: 10,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        marginBottom: 10,
+        gap: 8,
+    },
+    cropSearchInput: {
+        flex: 1,
+        fontSize: 14,
+        color: '#333',
     },
     chipContainer: {
         flexDirection: 'row',
@@ -517,7 +668,32 @@ const styles = StyleSheet.create({
     emptySubText: {
         color: '#aaa',
         marginTop: 5,
-    }
+    },
+    tapHint: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 4,
+        marginTop: 10,
+        paddingTop: 8,
+        borderTopWidth: 1,
+        borderTopColor: '#f0f0f0',
+    },
+    tapHintText: {
+        fontSize: 11,
+        color: '#aaa',
+    },
+    advisoryBanner: {
+        marginTop: 10,
+        padding: 10,
+        borderRadius: 8,
+        borderLeftWidth: 3,
+    },
+    advisoryText: {
+        fontSize: 12,
+        color: '#333',
+        lineHeight: 17,
+    },
 });
 
 export default CropScreen;

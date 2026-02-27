@@ -44,6 +44,7 @@ module.exports = {
             GOOGLE_GEOCODING_API_KEY: process.env.GOOGLE_GEOCODING_API_KEY,
             SUPABASE_URL: process.env.SUPABASE_URL,
             SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
+            PRICE_PREDICTION_API_URL: process.env.PRICE_PREDICTION_API_URL,
         },
     },
 };
