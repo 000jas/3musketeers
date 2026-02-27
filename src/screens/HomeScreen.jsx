@@ -11,6 +11,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import DAILY_TIPS from '../data/dailyTips.json';
 import { getCropTimeline, getUpcomingTasks, getHarvestInfo, getCropData, getRecommendation } from '../data/cropDatabase';
 import { fetchLatestCommunityPosts } from '../db/communitySupabase';
+import CropClinicWidget from '../components/CropClinicWidget';
 
 // Import local illustrations
 const Illustrations = {
@@ -261,9 +262,12 @@ const HomeScreen = () => {
             <View style={styles.actionsGrid}>
                 {renderQuickAction('leaf-outline', t('nav.crop'), 'Crop')}
                 {renderQuickAction('medkit-outline', 'Plant Clinic', 'Disease')}
+                {renderQuickAction('scan-outline', 'Crop Clinic', 'CropClinic')}
                 {renderQuickAction('layers-outline', t('nav.soil'), 'Soil')}
-                {renderQuickAction('newspaper-outline', 'Tips', 'AI')}
             </View>
+
+            {/* Crop Clinic Widget */}
+            <CropClinicWidget />
 
             {/* Expert Community Widget (Replaced Tips) */}
             <View style={styles.sectionHeader}>

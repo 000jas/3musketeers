@@ -4,6 +4,8 @@ import BottomTabNavigator from './BottomTabNavigator';
 import DiseaseScreen from '../screens/DiseaseScreen';
 import CommunityScreen from '../screens/CommunityScreen';
 import PostDetailScreen from '../screens/PostDetailScreen';
+import CropClinicScreen from '../screens/CropClinicScreen';
+import CropClinicResultScreen from '../screens/CropClinicResultScreen';
 
 const Stack = createStackNavigator();
 
@@ -32,6 +34,20 @@ const MainNavigator = () => {
             <Stack.Screen
                 name="PostDetail"
                 component={PostDetailScreen}
+                options={{
+                    headerShown: false,
+                }}
+            />
+            <Stack.Screen
+                name="CropClinic"
+                component={CropClinicScreen}
+                options={{
+                    headerShown: false,
+                }}
+            />
+            <Stack.Screen
+                name="CropClinicResult"
+                component={CropClinicResultScreen}
                 options={{
                     headerShown: false,
                 }}
